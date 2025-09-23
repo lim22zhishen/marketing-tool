@@ -2,6 +2,7 @@ import streamlit as st
 import google.generativeai as genai
 import json
 import re
+from streamlit_js_eval import streamlit_js_eval
 
 # Configure page
 st.set_page_config(page_title="CN → EN Product Marketing Generator", layout="wide")
@@ -94,9 +95,40 @@ def parse_json_response(response_text):
     except json.JSONDecodeError as e:
         return None
 
+def copy_to_clipboard(text, success_message="✅ 已复制到剪贴板！"):
+    """
+    Copy text to clipboard using JavaScript and show success message
+    """
+    # Escape special characters for JavaScript
+    escaped_text = text.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$')
+    
+    js_code = f"""
+    navigator.clipboard.writeText(`{escaped_text}`).then(function() {{
+        console.log('Copied to clipboard successfully');
+    }}).catch(function(err) {{
+        console.error('Failed to copy: ', err);
+        // Fallback for older browsers
+        var textArea = document.createElement("textarea");
+        textArea.value = `{escaped_text}`;
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        try {{
+            document.execCommand('copy');
+            console.log('Fallback copy successful');
+        }} catch (err) {{
+            console.error('Fallback copy failed: ', err);
+        }}
+        document.body.removeChild(textArea);
+    }});
+    """
+    
+    streamlit_js_eval(js=js_code, key=f"copy_{hash(text)}")
+    st.success(success_message)
+
 def display_marketing_content(data):
     """
-    Display the marketing content with persistent text areas for copying
+    Display the marketing content in an attractive format with working copy buttons
     """
     # Display category
     if 'category' in data:
@@ -104,34 +136,63 @@ def display_marketing_content(data):
     
     # Product Name Section
     st.markdown("### 📦 产品名称")
-    name = data.get('name', '无')
-    st.text_area("产品名称:", value=name, height=50, key="name_copy")
+    name_col, copy_col = st.columns([4, 1])
+    with name_col:
+        name = data.get('name', '无')
+        st.markdown(f"**{name}**")
+    with copy_col:
+        if st.button("📋 复制", key="copy_name", help="复制产品名称"):
+            copy_to_clipboard(name, "✅ 产品名称已复制！")
     
     st.divider()
     
     # Short Description Section
     st.markdown("### 💫 营销标语")
-    short_desc = data.get('short_desc', '无')
-    st.text_area("营销标语:", value=short_desc, height=80, key="short_copy")
+    short_col, copy_col2 = st.columns([4, 1])
+    with short_col:
+        short_desc = data.get('short_desc', '无')
+        st.markdown(f"*{short_desc}*")
+    with copy_col2:
+        if st.button("📋 复制", key="copy_short", help="复制营销标语"):
+            copy_to_clipboard(short_desc, "✅ 营销标语已复制！")
     
     st.divider()
     
     # Long Description Section
     st.markdown("### ✨ 产品亮点")
-    long_desc = data.get('long_desc', [])
-    if isinstance(long_desc, list):
-        formatted_desc = "\n".join([f"{i}. {point}" for i, point in enumerate(long_desc, 1)])
-    else:
-        formatted_desc = str(long_desc)
-    st.text_area("产品亮点:", value=formatted_desc, height=150, key="long_copy")
+    long_col, copy_col3 = st.columns([4, 1])
+    with long_col:
+        long_desc = data.get('long_desc', [])
+        if isinstance(long_desc, list):
+            for i, point in enumerate(long_desc, 1):
+                st.markdown(f"**{i}.** {point}")
+            formatted_desc = "\n".join([f"{i}. {point}" for i, point in enumerate(long_desc, 1)])
+        else:
+            st.markdown(long_desc)
+            formatted_desc = str(long_desc)
+    
+    with copy_col3:
+        if st.button("📋 复制", key="copy_long", help="复制产品亮点"):
+            copy_to_clipboard(formatted_desc, "✅ 产品亮点已复制！")
     
     st.divider()
     
     # Keywords Section
     st.markdown("### 🔍 SEO 关键词")
-    keywords = data.get('keywords', [])
-    keywords_text = ", ".join(keywords) if isinstance(keywords, list) else str(keywords)
-    st.text_area("SEO 关键词:", value=keywords_text, height=60, key="keywords_copy")
+    keywords_col, copy_col4 = st.columns([4, 1])
+    with keywords_col:
+        keywords = data.get('keywords', [])
+        if isinstance(keywords, list):
+            keyword_tags = " ".join([f"`{kw}`" for kw in keywords])
+            st.markdown(keyword_tags)
+            keywords_text = ", ".join(keywords)
+        else:
+            st.markdown(f"`{keywords}`")
+            keywords_text = str(keywords)
+    
+    with copy_col4:
+        if st.button("📋 复制", key="copy_keywords", help="复制SEO关键词"):
+            copy_to_clipboard(keywords_text, "✅ SEO关键词已复制！")
     
     st.divider()
     
@@ -147,17 +208,24 @@ Key Features:
 
 SEO Keywords: {keywords_text}"""
     
-    st.text_area("完整文案:", value=complete_text, height=250, key="complete_copy")
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown("**完整的英文营销文案，包含所有元素**")
+    with col2:
+        if st.button("📋 复制完整文案", key="copy_complete", use_container_width=True):
+            copy_to_clipboard(complete_text, "✅ 完整文案已复制到剪贴板！")
     
-    # Instructions
-    st.success("💡 **使用提示:** 点击任意文本框，使用 Ctrl+A 全选，然后 Ctrl+C 复制内容！")
-
-# ---- Main Streamlit UI ----
-st.title("🌏 产品营销文案生成器")
+    # Show preview in expander
+    with st.expander("📖 预览完整文案", expanded=False):
+        st.text(complete_text)
 
 # Initialize session state for generated content
 if 'generated_content' not in st.session_state:
     st.session_state.generated_content = None
+
+# ---- Main Streamlit UI ----
+st.title("🌏 产品营销文案生成器")
+st.markdown("*将中文产品信息转换为吸引人的英文营销文案*")
 
 # Main form
 with st.form("input_form"):
@@ -186,6 +254,7 @@ if submitted:
             
             if parsed_data:
                 st.session_state.generated_content = parsed_data
+                st.success("🎉 营销文案生成成功！")
             else:
                 st.warning("⚠️ 无法解析响应。显示原始输出：")
                 st.code(result, language="text")
@@ -193,8 +262,9 @@ if submitted:
 
 # Display generated content if it exists
 if st.session_state.generated_content:
+    st.markdown("---")
     display_marketing_content(st.session_state.generated_content)
 
 # Footer
 st.markdown("---")
-st.markdown("*由 Google Gemini AI 驱动*")
+st.markdown("*由 Google Gemini AI 驱动")
