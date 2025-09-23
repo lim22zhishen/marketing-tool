@@ -19,7 +19,7 @@ except KeyError:
 # Configure Gemini
 genai.configure(api_key=api_key)
 
-MODEL_NAME = "gemini-2.5-flash"  # Updated model name
+MODEL_NAME = "gemini-2.5-flash"
 
 def generate_marketing_text(chinese_input):
     """
@@ -69,10 +69,7 @@ def generate_marketing_text(chinese_input):
 """
     
     try:
-        # Initialize the model
         model = genai.GenerativeModel(MODEL_NAME)
-        
-        # Generate content
         response = model.generate_content(prompt)
         
         if response.text:
@@ -88,20 +85,18 @@ def parse_json_response(response_text):
     Attempts to parse the JSON response from Gemini
     """
     try:
-        # Try to extract JSON from the response if it contains other text
         json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
         if json_match:
             json_str = json_match.group(0)
             return json.loads(json_str)
         else:
-            # Try parsing the entire response
             return json.loads(response_text)
     except json.JSONDecodeError as e:
         return None
 
 def display_marketing_content(data):
     """
-    Display the marketing content in an attractive format with individual copy buttons
+    Display the marketing content with persistent text areas for copying
     """
     # Display category
     if 'category' in data:
@@ -109,60 +104,38 @@ def display_marketing_content(data):
     
     # Product Name Section
     st.markdown("### 📦 产品名称")
-    name_col, copy_col = st.columns([4, 1])
-    with name_col:
-        name = data.get('name', '无')
-        st.markdown(f"**{name}**")
-    with copy_col:
-        if st.button("📋", key="copy_name", help="复制产品名称"):
-            st.code(name, language="text")
+    name = data.get('name', '无')
+    st.text_area("产品名称:", value=name, height=50, key="name_copy")
     
     st.divider()
     
     # Short Description Section
     st.markdown("### 💫 营销标语")
-    short_col, copy_col2 = st.columns([4, 1])
-    with short_col:
-        short_desc = data.get('short_desc', '无')
-        st.markdown(f"*{short_desc}*")
-    with copy_col2:
-        if st.button("📋", key="copy_short", help="复制营销标语"):
-            st.code(short_desc, language="text")
+    short_desc = data.get('short_desc', '无')
+    st.text_area("营销标语:", value=short_desc, height=80, key="short_copy")
     
     st.divider()
     
     # Long Description Section
     st.markdown("### ✨ 产品亮点")
-    long_col, copy_col3 = st.columns([4, 1])
-    with long_col:
-        long_desc = data.get('long_desc', [])
-        if isinstance(long_desc, list):
-            for i, point in enumerate(long_desc, 1):
-                st.markdown(f"**{i}.** {point}")
-        else:
-            st.markdown(long_desc)
-    
-    with copy_col3:
-        if st.button("📋", key="copy_long", help="复制产品亮点"):
-            if isinstance(long_desc, list):
-                formatted_desc = "\n".join([f"{i}. {point}" for i, point in enumerate(long_desc, 1)])
-            else:
-                formatted_desc = str(long_desc)
-            st.code(formatted_desc, language="text")
+    long_desc = data.get('long_desc', [])
+    if isinstance(long_desc, list):
+        formatted_desc = "\n".join([f"{i}. {point}" for i, point in enumerate(long_desc, 1)])
+    else:
+        formatted_desc = str(long_desc)
+    st.text_area("产品亮点:", value=formatted_desc, height=150, key="long_copy")
     
     st.divider()
     
     # Keywords Section
     st.markdown("### 🔍 SEO 关键词")
     keywords = data.get('keywords', [])
-    if isinstance(keywords, list):
-        keyword_tags = " ".join([f"`{kw}`" for kw in keywords])
-        st.markdown(keyword_tags)
-    else:
-        st.markdown(f"`{keywords}`")
+    keywords_text = ", ".join(keywords) if isinstance(keywords, list) else str(keywords)
+    st.text_area("SEO 关键词:", value=keywords_text, height=60, key="keywords_copy")
+    
+    st.divider()
     
     # Complete copy section
-    st.divider()
     st.markdown("### 📄 完整文案")
     
     complete_text = f"""Product Name: {name}
@@ -170,22 +143,27 @@ def display_marketing_content(data):
 Marketing Tagline: {short_desc}
 
 Key Features:
-{chr(10).join([f"{i}. {point}" for i, point in enumerate(long_desc, 1)]) if isinstance(long_desc, list) else long_desc}
+{formatted_desc}
 
-SEO Keywords: {", ".join(keywords) if isinstance(keywords, list) else str(keywords)}"""
+SEO Keywords: {keywords_text}"""
     
-    if st.button("📋 复制完整文案", key="copy_complete", use_container_width=True):
-        st.code(complete_text, language="text")
-        st.success("✅ 完整文案已显示，请手动复制！")
+    st.text_area("完整文案:", value=complete_text, height=250, key="complete_copy")
+    
+    # Instructions
+    st.success("💡 **使用提示:** 点击任意文本框，使用 Ctrl+A 全选，然后 Ctrl+C 复制内容！")
 
 # ---- Main Streamlit UI ----
 st.title("🌏 产品营销文案生成器")
+
+# Initialize session state for generated content
+if 'generated_content' not in st.session_state:
+    st.session_state.generated_content = None
 
 # Main form
 with st.form("input_form"):
     chinese_input = st.text_area(
         "输入产品规格/信息（中文）：",
-        height=50,
+        height=100,
         placeholder="例如：这款保温水杯有1L和1.5L两种规格，采用304不锈钢内胆，双层真空保温设计，可保温12小时，杯盖密封性好不漏水，适合办公室和户外使用..."
     )
     
@@ -201,15 +179,21 @@ if submitted:
         
         if result.startswith("Error:"):
             st.error(result)
+            st.session_state.generated_content = None
         else:
             # Try to parse JSON
             parsed_data = parse_json_response(result)
             
             if parsed_data:
-                display_marketing_content(parsed_data)
+                st.session_state.generated_content = parsed_data
             else:
                 st.warning("⚠️ 无法解析响应。显示原始输出：")
                 st.code(result, language="text")
+                st.session_state.generated_content = None
+
+# Display generated content if it exists
+if st.session_state.generated_content:
+    display_marketing_content(st.session_state.generated_content)
 
 # Footer
 st.markdown("---")
