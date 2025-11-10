@@ -3,6 +3,7 @@ import google.generativeai as genai
 import json
 import re
 from streamlit_js_eval import streamlit_js_eval
+from streamlit.components.v1 import html as components_html
 
 # Configure page
 st.set_page_config(page_title="CN → EN Product Marketing Generator", layout="wide")
@@ -95,6 +96,39 @@ def parse_json_response(response_text):
     except json.JSONDecodeError as e:
         return None
 
+def translate_fields(data):
+    """
+    Translate generated English fields back to Chinese using the Gemini model.
+    Returns a dict with keys: name_cn, short_desc_cn, long_desc_cn (list), keywords_cn (list)
+    If translation fails, returns None.
+    """
+    try:
+        # Prepare payload safely using json.dumps so special chars are preserved
+        payload = {
+            "name": data.get("name", ""),
+            "short_desc": data.get("short_desc", ""),
+            "long_desc": data.get("long_desc", []),
+            "keywords": data.get("keywords", [])
+        }
+
+        prompt = (
+            "请将下面 JSON 中的英文营销文案翻译成通顺、自然的中文，并以有效的 JSON 返回。"
+            " 只返回 JSON，不要额外文字。输出的键名应为 name_cn, short_desc_cn, long_desc_cn, keywords_cn。\n\n"
+            + json.dumps(payload, ensure_ascii=False)
+        )
+
+        model = genai.GenerativeModel(MODEL_NAME)
+        response = model.generate_content(prompt)
+
+        if not response.text:
+            return None
+
+        translated = parse_json_response(response.text.strip())
+        return translated
+
+    except Exception:
+        return None
+
 def copy_to_clipboard(text, success_message="✅ 已复制到剪贴板！"):
     """
     Copy text to clipboard using JavaScript and show success message
@@ -126,6 +160,44 @@ def copy_to_clipboard(text, success_message="✅ 已复制到剪贴板！"):
     streamlit_js_eval(js=js_code, key=f"copy_{hash(text)}")
     st.success(success_message)
 
+
+def render_copy_button(text, label="📋 复制", key="copy_btn", height=40):
+        """
+        Render a client-side HTML copy button using Streamlit components so clicking doesn't
+        cause a Streamlit rerun. This copies `text` to the clipboard and temporarily
+        updates the button label to show success.
+        """
+        # Use json.dumps to safely escape the text for JS string literal
+        js_text = json.dumps(text)
+        safe_label = label.replace("'", "\\'")
+        component_html = f"""
+        <button id="{key}" style="padding:6px 10px;border-radius:6px;border:1px solid #ddd;background:#f8f9fa;cursor:pointer">{safe_label}</button>
+        <script>
+        (function(){{
+            const btn = document.getElementById('{key}');
+            if(!btn) return;
+            btn.addEventListener('click', async function(e){{
+                try{{
+                    await navigator.clipboard.writeText({js_text});
+                    const old = btn.innerText;
+                    btn.innerText = '✅ 已复制';
+                    setTimeout(()=> btn.innerText = old, 1500);
+                }}catch(err){{
+                    console.error('Copy failed', err);
+                    const old = btn.innerText;
+                    btn.innerText = '❌ 复制失败';
+                    setTimeout(()=> btn.innerText = old, 1500);
+                }}
+            }});
+        }})();
+        </script>
+        """
+        try:
+                components_html(component_html, height=height)
+        except Exception as e:
+                # Fallback to server-side copy if components fail
+                st.button(label, key=key)
+
 def display_marketing_content(data):
     """
     Display the marketing content in an attractive format with working copy buttons
@@ -133,6 +205,18 @@ def display_marketing_content(data):
     # Display category
     if 'category' in data:
         st.info(f"🏷️ **识别的产品类别:** {data['category']}")
+
+    # Attempt to get Chinese translations for each field
+    translations = translate_fields(data)
+    name_cn = None
+    short_cn = None
+    long_cn = None
+    keywords_cn = None
+    if translations and isinstance(translations, dict):
+        name_cn = translations.get('name_cn')
+        short_cn = translations.get('short_desc_cn')
+        long_cn = translations.get('long_desc_cn')
+        keywords_cn = translations.get('keywords_cn')
     
     # Product Name Section
     st.markdown("### 📦 产品名称")
@@ -140,9 +224,14 @@ def display_marketing_content(data):
     with name_col:
         name = data.get('name', '无')
         st.markdown(f"**{name}**")
+        if name_cn:
+            # show Chinese translation under the English name
+            st.caption(f"中文翻译：{name_cn}")
     with copy_col:
-        if st.button("📋 复制", key="copy_name", help="复制产品名称"):
-            copy_to_clipboard(name, "✅ 产品名称已复制！")
+        # client-side copy buttons (won't trigger Streamlit rerun)
+        render_copy_button(name, label="📋 复制", key=f"copy_name_{abs(hash(name))}")
+        if name_cn:
+            render_copy_button(name_cn, label="📋 复制中文", key=f"copy_name_cn_{abs(hash(name_cn))}")
     
     st.divider()
     
@@ -152,9 +241,12 @@ def display_marketing_content(data):
     with short_col:
         short_desc = data.get('short_desc', '无')
         st.markdown(f"*{short_desc}*")
+        if short_cn:
+            st.caption(f"中文翻译：{short_cn}")
     with copy_col2:
-        if st.button("📋 复制", key="copy_short", help="复制营销标语"):
-            copy_to_clipboard(short_desc, "✅ 营销标语已复制！")
+        render_copy_button(short_desc, label="📋 复制", key=f"copy_short_{abs(hash(short_desc))}")
+        if short_cn:
+            render_copy_button(short_cn, label="📋 复制中文", key=f"copy_short_cn_{abs(hash(short_cn))}")
     
     st.divider()
     
@@ -170,10 +262,22 @@ def display_marketing_content(data):
         else:
             st.markdown(long_desc)
             formatted_desc = str(long_desc)
+        # show Chinese translations for long description if available
+        if long_cn:
+            if isinstance(long_cn, list):
+                for i, point in enumerate(long_cn, 1):
+                    st.caption(f"{i}. {point}")
+                long_cn_text = "\n".join([f"{i}. {p}" for i, p in enumerate(long_cn, 1)])
+            else:
+                st.caption(str(long_cn))
+                long_cn_text = str(long_cn)
+        else:
+            long_cn_text = None
     
     with copy_col3:
-        if st.button("📋 复制", key="copy_long", help="复制产品亮点"):
-            copy_to_clipboard(formatted_desc, "✅ 产品亮点已复制！")
+        render_copy_button(formatted_desc, label="📋 复制", key=f"copy_long_{abs(hash(formatted_desc))}")
+        if long_cn:
+            render_copy_button(long_cn_text or ("\n".join(long_cn) if isinstance(long_cn, list) else str(long_cn)), label="📋 复制中文", key=f"copy_long_cn_{abs(hash(str(long_cn)))}")
     
     st.divider()
     
@@ -189,10 +293,22 @@ def display_marketing_content(data):
         else:
             st.markdown(f"`{keywords}`")
             keywords_text = str(keywords)
+        # Chinese keywords display
+        if keywords_cn:
+            if isinstance(keywords_cn, list):
+                kw_cn_tags = " ".join([f"`{kw}`" for kw in keywords_cn])
+                st.markdown(kw_cn_tags)
+                keywords_cn_text = ", ".join(keywords_cn)
+            else:
+                st.markdown(f"`{keywords_cn}`")
+                keywords_cn_text = str(keywords_cn)
+        else:
+            keywords_cn_text = None
     
     with copy_col4:
-        if st.button("📋 复制", key="copy_keywords", help="复制SEO关键词"):
-            copy_to_clipboard(keywords_text, "✅ SEO关键词已复制！")
+        render_copy_button(keywords_text, label="📋 复制", key=f"copy_keywords_{abs(hash(keywords_text))}")
+        if keywords_cn:
+            render_copy_button(keywords_cn_text or (", ".join(keywords_cn) if isinstance(keywords_cn, list) else str(keywords_cn)), label="📋 复制中文", key=f"copy_keywords_cn_{abs(hash(str(keywords_cn)))}")
     
     st.divider()
     
@@ -212,8 +328,7 @@ SEO Keywords: {keywords_text}"""
     with col1:
         st.markdown("**完整的英文营销文案，包含所有元素**")
     with col2:
-        if st.button("📋 复制完整文案", key="copy_complete", use_container_width=True):
-            copy_to_clipboard(complete_text, "✅ 完整文案已复制到剪贴板！")
+        render_copy_button(complete_text, label="📋 复制完整文案", key=f"copy_complete_{abs(hash(complete_text))}")
     
     # Show preview in expander
     with st.expander("📖 预览完整文案", expanded=False):
